@@ -46,22 +46,37 @@ exports.approveBAPP = async (req, res) => {
       });
     }
 
-    // ✅ ADDED: Cek signature untuk BAPP
     const { supabaseAdmin } = require('../config/supabase');
-    const { data: existingSignature } = await supabaseAdmin
-      .from('bapp_attachments')
-      .select('*')
-      .eq('bapp_id', id)
-      .eq('uploaded_by', approverId)
-      .eq('file_type', 'signature')
-      .single();
+    
+    let signatureWarning = null;
+    
+    try {
+      const { data: existingSignature, error: signatureError } = await supabaseAdmin
+        .from('bapp_attachments')
+        .select('*')
+        .eq('bapp_id', id)
+        .eq('uploaded_by', approverId)
+        .eq('file_type', 'signature')
+        .maybeSingle();
 
-    if (!existingSignature) {
-      return res.status(400).json({
-        success: false,
-        message: 'Please upload your signature first before approving. Use POST /api/bapp/:id/signature to upload.',
-        hint: 'Signature must be uploaded separately before approval'
+      console.log('🔍 BAPP Signature check result:', {
+        bapp_id: id,
+        uploaded_by: approverId,
+        signatureFound: !!existingSignature,
+        error: signatureError
       });
+
+      if (signatureError) {
+        console.warn('Error checking signature:', signatureError);
+        signatureWarning = 'Could not verify signature status';
+      } else if (!existingSignature) {
+        console.warn(' No signature found for user:', approverId);
+        signatureWarning = 'Approved without signature - please upload signature for complete documentation';
+      }
+
+    } catch (err) {
+      console.error(' Unexpected error during signature check:', err);
+      signatureWarning = 'Signature verification failed - proceeding without signature';
     }
 
     // Create approval record
@@ -86,11 +101,18 @@ exports.approveBAPP = async (req, res) => {
     // Fetch updated BAPP
     const updatedBAPP = await BAPPRepository.findByIdWithRelations(id);
 
-    res.status(200).json({
+    const response = {
       success: true,
       message: 'BAPP approved successfully',
       data: updatedBAPP
-    });
+    };
+
+    // Add warning if signature is missing
+    if (signatureWarning) {
+      response.warning = signatureWarning;
+    }
+
+    res.status(200).json(response);
   } catch (error) {
     console.error('Approve BAPP error:', error);
     res.status(500).json({
