@@ -11,7 +11,7 @@ const path = require('path');
 exports.approveBAPB = async (req, res) => {
   try {
     const { id } = req.params;
-    const { notes } = req.body;  // Hanya ambil notes dari body
+    const { notes } = req.body;
     const approverId = req.user.id;
 
     const bapb = await BAPBRepository.findByIdWithRelations(id);
@@ -48,35 +48,39 @@ exports.approveBAPB = async (req, res) => {
       });
     }
 
-    // ✅ FIXED: Cek apakah user sudah upload signature
     const { supabaseAdmin } = require('../config/supabase');
-    const { data: existingSignature, error: signatureError } = await supabaseAdmin
-      .from('bapb_attachments')
-      .select('*')
-      .eq('bapb_id', id)
-      .eq('uploaded_by', approverId)
-      .eq('file_type', 'signature')
-      .maybeSingle();
     
-    console.log('🔍 Checking signature:', {
-      bapb_id: id,
-      uploaded_by: approverId,
-      signatureFound: !!existingSignature,
-      signatureError: signatureError
-    });
-
-    if (!existingSignature) {
-      return res.status(400).json({
-        success: false,
-        message: 'Please upload your signature first before approving. Use POST /api/bapb/:id/signature to upload.',
-        hint: 'Signature must be uploaded separately before approval',
-        debug: {
-          bapb_id: id,
-          user_id: approverId,
-          user_role: req.user.role
-        }
+    let signatureWarning = null;
+    
+    try {
+      const { data: existingSignature, error: signatureError } = await supabaseAdmin
+        .from('bapb_attachments')
+        .select('*')
+        .eq('bapb_id', id)
+        .eq('uploaded_by', approverId)
+        .eq('file_type', 'signature')
+        .maybeSingle();
+      
+      console.log('🔍 Signature check result:', {
+        bapb_id: id,
+        uploaded_by: approverId,
+        signatureFound: !!existingSignature,
+        error: signatureError
       });
+
+      if (signatureError) {
+        console.warn('Error checking signature:', signatureError);
+        signatureWarning = 'Could not verify signature status';
+      } else if (!existingSignature) {
+        console.warn('No signature found for user:', approverId);
+        signatureWarning = 'Approved without signature - please upload signature for complete documentation';
+      }
+
+    } catch (err) {
+      console.error('Unexpected error during signature check:', err);
+      signatureWarning = 'Signature verification failed - proceeding without signature';
     }
+
     // Create approval record
     await BAPBRepository.createApproval({
       bapb_id: id,
@@ -99,11 +103,18 @@ exports.approveBAPB = async (req, res) => {
     // Fetch updated BAPB
     const updatedBAPB = await BAPBRepository.findByIdWithRelations(id);
 
-    res.status(200).json({
+    const response = {
       success: true,
       message: 'BAPB approved successfully',
       data: updatedBAPB
-    });
+    };
+
+    // Add warning if signature is missing
+    if (signatureWarning) {
+      response.warning = signatureWarning;
+    }
+
+    res.status(200).json(response);
   } catch (error) {
     console.error('Approve BAPB error:', error);
     res.status(500).json({
