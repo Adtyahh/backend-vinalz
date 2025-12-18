@@ -1,4 +1,3 @@
-// src/services/paymentService.js
 const { supabaseAdmin } = require('../config/supabase');
 const BAPBRepository = require('../repositories/BAPBRepository');
 const BAPPRepository = require('../repositories/BAPPRepository');

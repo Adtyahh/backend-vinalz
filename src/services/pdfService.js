@@ -237,6 +237,7 @@ class PDFService {
   }
 
   // BAPP PDF GENERATION
+  
   buildBAPPPDF(data, signatures, stream) {
     const doc = new PDFDocument({ 
       size: 'A4', 

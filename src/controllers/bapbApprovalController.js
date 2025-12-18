@@ -1,48 +1,50 @@
-const BAPPRepository = require('../repositories/BAPPRepository');
+const BAPBRepository = require('../repositories/BAPBRepository');
 const notificationService = require('../services/notificationService');
+const fs = require('fs');   
+const path = require('path'); 
 
 /**
- * Approve BAPP
- * @route POST /api/bapp/:id/approve
- * @access Private (Approver, Admin)
+ * Approve BAPB
+ * @route POST /api/bapb/:id/approve
+ * @access Private (PIC Gudang, Approver, Admin)
  */
-exports.approveBAPP = async (req, res) => {
+exports.approveBAPB = async (req, res) => {
   try {
     const { id } = req.params;
     const { notes } = req.body;
     const approverId = req.user.id;
 
-    const bapp = await BAPPRepository.findByIdWithRelations(id);
+    const bapb = await BAPBRepository.findByIdWithRelations(id);
 
-    if (!bapp) {
+    if (!bapb) {
       return res.status(404).json({
         success: false,
-        message: 'BAPP not found'
+        message: 'BAPB not found'
       });
     }
 
     // Check status
-    if (!['submitted', 'in_review'].includes(bapp.status)) {
+    if (!['submitted', 'in_review'].includes(bapb.status)) {
       return res.status(400).json({
         success: false,
-        message: 'BAPP must be in submitted or in_review status to be approved'
+        message: 'BAPB must be in submitted or in_review status to be approved'
       });
     }
 
     // Check authorization
-    if (!['approver', 'admin'].includes(req.user.role)) {
+    if (!['pic_gudang', 'approver', 'admin'].includes(req.user.role)) {
       return res.status(403).json({
         success: false,
-        message: 'Not authorized to approve BAPP'
+        message: 'Not authorized to approve BAPB'
       });
     }
 
     // Check if user already approved
-    const hasApproved = await BAPPRepository.hasUserApproved(id, approverId);
+    const hasApproved = await BAPBRepository.hasUserApproved(id, approverId);
     if (hasApproved) {
       return res.status(400).json({
         success: false,
-        message: 'You have already approved this BAPP'
+        message: 'You have already approved this BAPB'
       });
     }
 
@@ -52,15 +54,15 @@ exports.approveBAPP = async (req, res) => {
     
     try {
       const { data: existingSignature, error: signatureError } = await supabaseAdmin
-        .from('bapp_attachments')
+        .from('bapb_attachments')
         .select('*')
-        .eq('bapp_id', id)
+        .eq('bapb_id', id)
         .eq('uploaded_by', approverId)
         .eq('file_type', 'signature')
         .maybeSingle();
-
-      console.log('🔍 BAPP Signature check result:', {
-        bapp_id: id,
+      
+      console.log('🔍 Signature check result:', {
+        bapb_id: id,
         uploaded_by: approverId,
         signatureFound: !!existingSignature,
         error: signatureError
@@ -70,41 +72,41 @@ exports.approveBAPP = async (req, res) => {
         console.warn('Error checking signature:', signatureError);
         signatureWarning = 'Could not verify signature status';
       } else if (!existingSignature) {
-        console.warn(' No signature found for user:', approverId);
+        console.warn('No signature found for user:', approverId);
         signatureWarning = 'Approved without signature - please upload signature for complete documentation';
       }
 
     } catch (err) {
-      console.error(' Unexpected error during signature check:', err);
+      console.error('Unexpected error during signature check:', err);
       signatureWarning = 'Signature verification failed - proceeding without signature';
     }
 
     // Create approval record
-    await BAPPRepository.createApproval({
-      bapp_id: id,
+    await BAPBRepository.createApproval({
+      bapb_id: id,
       approver_id: approverId,
       action: 'approved',
       notes
     });
 
-    // Update BAPP status and assign Direksi if not assigned
+    // Update BAPB status and assign PIC if not assigned
     const updateData = { status: 'approved' };
-    if (!bapp.direksi_pekerjaan_id && req.user.role === 'approver') {
-      updateData.direksi_pekerjaan_id = approverId;
+    if (!bapb.pic_gudang_id && req.user.role === 'pic_gudang') {
+      updateData.pic_gudang_id = approverId;
     }
 
-    await BAPPRepository.update(id, updateData);
+    await BAPBRepository.update(id, updateData);
 
     // Send notification
-    await notificationService.notifyBAPPApproved(bapp, req.user.name);
+    await notificationService.notifyBAPBApproved(bapb, req.user.name);
 
-    // Fetch updated BAPP
-    const updatedBAPP = await BAPPRepository.findByIdWithRelations(id);
+    // Fetch updated BAPB
+    const updatedBAPB = await BAPBRepository.findByIdWithRelations(id);
 
     const response = {
       success: true,
-      message: 'BAPP approved successfully',
-      data: updatedBAPP
+      message: 'BAPB approved successfully',
+      data: updatedBAPB
     };
 
     // Add warning if signature is missing
@@ -114,21 +116,21 @@ exports.approveBAPP = async (req, res) => {
 
     res.status(200).json(response);
   } catch (error) {
-    console.error('Approve BAPP error:', error);
+    console.error('Approve BAPB error:', error);
     res.status(500).json({
       success: false,
-      message: 'Error approving BAPP',
+      message: 'Error approving BAPB',
       error: error.message
     });
   }
 };
 
 /**
- * Reject BAPP
- * @route POST /api/bapp/:id/reject
- * @access Private (Approver, Admin)
+ * Reject BAPB
+ * @route POST /api/bapb/:id/reject
+ * @access Private (PIC Gudang, Approver, Admin)
  */
-exports.rejectBAPP = async (req, res) => {
+exports.rejectBAPB = async (req, res) => {
   try {
     const { id } = req.params;
     const { notes, rejectionReason } = req.body;
@@ -141,72 +143,72 @@ exports.rejectBAPP = async (req, res) => {
       });
     }
 
-    const bapp = await BAPPRepository.findById(id);
+    const bapb = await BAPBRepository.findById(id);
 
-    if (!bapp) {
+    if (!bapb) {
       return res.status(404).json({
         success: false,
-        message: 'BAPP not found'
+        message: 'BAPB not found'
       });
     }
 
     // Check status
-    if (!['submitted', 'in_review'].includes(bapp.status)) {
+    if (!['submitted', 'in_review'].includes(bapb.status)) {
       return res.status(400).json({
         success: false,
-        message: 'BAPP must be in submitted or in_review status to be rejected'
+        message: 'BAPB must be in submitted or in_review status to be rejected'
       });
     }
 
     // Check authorization
-    if (!['approver', 'admin'].includes(req.user.role)) {
+    if (!['pic_gudang', 'approver', 'admin'].includes(req.user.role)) {
       return res.status(403).json({
         success: false,
-        message: 'Not authorized to reject BAPP'
+        message: 'Not authorized to reject BAPB'
       });
     }
 
     // Create rejection record
-    await BAPPRepository.createApproval({
-      bapp_id: id,
+    await BAPBRepository.createApproval({
+      bapb_id: id,
       approver_id: approverId,
       action: 'rejected',
       notes
     });
 
-    // Update BAPP status
-    await BAPPRepository.update(id, {
+    // Update BAPB status
+    await BAPBRepository.update(id, {
       status: 'rejected',
       rejection_reason: rejectionReason
     });
 
     // Send notification
-    await notificationService.notifyBAPPRejected(bapp, rejectionReason);
+    await notificationService.notifyBAPBRejected(bapb, rejectionReason);
 
-    // Fetch updated BAPP
-    const updatedBAPP = await BAPPRepository.findByIdWithRelations(id);
+    // Fetch updated BAPB
+    const updatedBAPB = await BAPBRepository.findByIdWithRelations(id);
 
     res.status(200).json({
       success: true,
-      message: 'BAPP rejected',
-      data: updatedBAPP
+      message: 'BAPB rejected',
+      data: updatedBAPB
     });
   } catch (error) {
-    console.error('Reject BAPP error:', error);
+    console.error('Reject BAPB error:', error);
     res.status(500).json({
       success: false,
-      message: 'Error rejecting BAPP',
+      message: 'Error rejecting BAPB',
       error: error.message
     });
   }
 };
 
 /**
- * Request revision for BAPP
- * @route POST /api/bapp/:id/revision
- * @access Private (Approver, Admin)
+ * Request revision for BAPB
+ * @route POST /api/bapb/:id/revision
+ * @access Private (PIC Gudang, Approver, Admin)
  */
-exports.requestRevisionBAPP = async (req, res) => {
+exports.requestRevisionBAPB = async (req, res) => {
   try {
     const { id } = req.params;
     const { notes, revisionReason } = req.body;
@@ -219,25 +221,25 @@ exports.requestRevisionBAPP = async (req, res) => {
       });
     }
 
-    const bapp = await BAPPRepository.findById(id);
+    const bapb = await BAPBRepository.findById(id);
 
-    if (!bapp) {
+    if (!bapb) {
       return res.status(404).json({
         success: false,
-        message: 'BAPP not found'
+        message: 'BAPB not found'
       });
     }
 
     // Check status
-    if (!['submitted', 'in_review'].includes(bapp.status)) {
+    if (!['submitted', 'in_review'].includes(bapb.status)) {
       return res.status(400).json({
         success: false,
-        message: 'BAPP must be in submitted or in_review status to request revision'
+        message: 'BAPB must be in submitted or in_review status to request revision'
       });
     }
 
     // Check authorization
-    if (!['approver', 'admin'].includes(req.user.role)) {
+    if (!['pic_gudang', 'approver', 'admin'].includes(req.user.role)) {
       return res.status(403).json({
         success: false,
         message: 'Not authorized to request revision'
@@ -245,32 +247,32 @@ exports.requestRevisionBAPP = async (req, res) => {
     }
 
     // Create revision request record
-    await BAPPRepository.createApproval({
-      bapp_id: id,
+    await BAPBRepository.createApproval({
+      bapb_id: id,
       approver_id: approverId,
       action: 'revision_required',
       notes
     });
 
-    // Update BAPP status
-    await BAPPRepository.update(id, {
+    // Update BAPB status
+    await BAPBRepository.update(id, {
       status: 'revision_required',
       rejection_reason: revisionReason
     });
 
     // Send notification
-    await notificationService.notifyBAPPRevisionRequired(bapp, revisionReason);
+    await notificationService.notifyBAPBRevisionRequired(bapb, revisionReason);
 
-    // Fetch updated BAPP
-    const updatedBAPP = await BAPPRepository.findByIdWithRelations(id);
+    // Fetch updated BAPB
+    const updatedBAPB = await BAPBRepository.findByIdWithRelations(id);
 
     res.status(200).json({
       success: true,
-      message: 'Revision requested for BAPP',
-      data: updatedBAPP
+      message: 'Revision requested for BAPB',
+      data: updatedBAPB
     });
   } catch (error) {
-    console.error('Request revision BAPP error:', error);
+    console.error('Request revision BAPB error:', error);
     res.status(500).json({
       success: false,
       message: 'Error requesting revision',
@@ -280,15 +282,15 @@ exports.requestRevisionBAPP = async (req, res) => {
 };
 
 /**
- * Get approval history for BAPP
- * @route GET /api/bapp/:id/approvals
+ * Get approval history for BAPB
+ * @route GET /api/bapb/:id/approvals
  * @access Private
  */
-exports.getBAPPApprovalHistory = async (req, res) => {
+exports.getBAPBApprovalHistory = async (req, res) => {
   try {
     const { id } = req.params;
 
-    const approvals = await BAPPRepository.getApprovalHistory(id);
+    const approvals = await BAPBRepository.getApprovalHistory(id);
 
     res.status(200).json({
       success: true,

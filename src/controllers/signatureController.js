@@ -23,6 +23,12 @@ exports.uploadBAPBSignature = async (req, res) => {
     const { signatureData } = req.body;
     const userId = req.user.id;
 
+    console.log('📝 Upload BAPB signature request:', {
+      bapb_id: id,
+      user_id: userId,
+      user_role: req.user.role
+    });
+
     if (!signatureData) {
       return res.status(400).json({
         success: false,
@@ -47,16 +53,28 @@ exports.uploadBAPBSignature = async (req, res) => {
       });
     }
 
-    // Check authorization - vendor_barang instead of vendor
+    console.log('📋 BAPB info:', {
+      id: bapb.id,
+      vendor_id: bapb.vendor_id,
+      pic_gudang_id: bapb.pic_gudang_id,
+      status: bapb.status
+    });
+
+    // ✅ FIXED: Simplified authorization - allow pic_gudang and approver to sign anytime
     const canSign = 
       (req.user.role === 'vendor_barang' && bapb.vendor_id === userId) ||
-      (req.user.role === 'pic_gudang' && (bapb.pic_gudang_id === userId || bapb.pic_gudang_id === null)) ||
-      ['approver', 'admin'].includes(req.user.role);
+      ['pic_gudang', 'approver', 'admin'].includes(req.user.role);
 
     if (!canSign) {
       return res.status(403).json({
         success: false,
-        message: 'Not authorized to sign this BAPB'
+        message: 'Not authorized to sign this BAPB',
+        debug: {
+          userRole: req.user.role,
+          userId: userId,
+          bapbVendorId: bapb.vendor_id,
+          bapbPicGudangId: bapb.pic_gudang_id
+        }
       });
     }
 
@@ -69,6 +87,8 @@ exports.uploadBAPBSignature = async (req, res) => {
     const filePath = path.join(uploadDir, filename);
 
     await fs.writeFile(filePath, imageBuffer);
+
+    console.log('💾 Signature file saved:', filePath);
 
     // Create attachment record
     const { data: attachment, error } = await supabaseAdmin
@@ -83,9 +103,14 @@ exports.uploadBAPBSignature = async (req, res) => {
       .select()
       .single();
 
-    if (error) throw error;
+    if (error) {
+      console.error('❌ Error saving to database:', error);
+      throw error;
+    }
 
-    res.status(200).json({
+    console.log('✅ Signature saved to database:', attachment.id);
+
+    res.status(201).json({
       success: true,
       message: 'Signature uploaded successfully',
       data: {
@@ -97,7 +122,7 @@ exports.uploadBAPBSignature = async (req, res) => {
       }
     });
   } catch (error) {
-    console.error('Upload BAPB signature error:', error);
+    console.error('❌ Upload BAPB signature error:', error);
     res.status(500).json({
       success: false,
       message: 'Error uploading signature',
@@ -189,6 +214,12 @@ exports.uploadBAPPSignature = async (req, res) => {
     const { signatureData } = req.body;
     const userId = req.user.id;
 
+    console.log('📝 Upload BAPP signature request:', {
+      bapp_id: id,
+      user_id: userId,
+      user_role: req.user.role
+    });
+
     if (!signatureData) {
       return res.status(400).json({
         success: false,
@@ -213,16 +244,27 @@ exports.uploadBAPPSignature = async (req, res) => {
       });
     }
 
-    // Check authorization - vendor_jasa instead of vendor
+    console.log('📋 BAPP info:', {
+      id: bapp.id,
+      vendor_id: bapp.vendor_id,
+      direksi_pekerjaan_id: bapp.direksi_pekerjaan_id,
+      status: bapp.status
+    });
+
+    // ✅ FIXED: Simplified authorization - allow approver to sign anytime
     const canSign = 
       (req.user.role === 'vendor_jasa' && bapp.vendor_id === userId) ||
-      (req.user.role === 'approver' && (bapp.direksi_pekerjaan_id === userId || bapp.direksi_pekerjaan_id === null)) ||
       ['approver', 'admin'].includes(req.user.role);
 
     if (!canSign) {
       return res.status(403).json({
         success: false,
-        message: 'Not authorized to sign this BAPP'
+        message: 'Not authorized to sign this BAPP',
+        debug: {
+          userRole: req.user.role,
+          userId: userId,
+          bappVendorId: bapp.vendor_id
+        }
       });
     }
 
@@ -236,6 +278,8 @@ exports.uploadBAPPSignature = async (req, res) => {
 
     await fs.writeFile(filePath, imageBuffer);
 
+    console.log('💾 Signature file saved:', filePath);
+
     const { data: attachment, error } = await supabaseAdmin
       .from('bapp_attachments')
       .insert({
@@ -248,7 +292,12 @@ exports.uploadBAPPSignature = async (req, res) => {
       .select()
       .single();
 
-    if (error) throw error;
+    if (error) {
+      console.error('❌ Error saving to database:', error);
+      throw error;
+    }
+
+    console.log('✅ Signature saved to database:', attachment.id);
 
     res.status(201).json({
       success: true,
@@ -262,7 +311,7 @@ exports.uploadBAPPSignature = async (req, res) => {
       }
     });
   } catch (error) {
-    console.error('Upload BAPP signature error:', error);
+    console.error('❌ Upload BAPP signature error:', error);
     res.status(500).json({
       success: false,
       message: 'Error uploading signature',
@@ -270,6 +319,7 @@ exports.uploadBAPPSignature = async (req, res) => {
     });
   }
 };
+
 
 exports.getBAPPSignatures = async (req, res) => {
   try {
@@ -338,8 +388,9 @@ exports.deleteSignature = async (req, res) => {
     const fullPath = path.join(__dirname, '../..', attachment.file_path);
     try {
       await fs.unlink(fullPath);
+      console.log('✅ Signature file deleted:', fullPath);
     } catch (err) {
-      console.error('Error deleting file:', err);
+      console.error('⚠️ Error deleting file:', err);
     }
 
     // Delete database record
@@ -349,6 +400,8 @@ exports.deleteSignature = async (req, res) => {
       .eq('id', attachmentId);
 
     if (deleteError) throw deleteError;
+
+    console.log('✅ Signature record deleted from DB');
 
     res.status(200).json({
       success: true,
